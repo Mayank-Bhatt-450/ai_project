@@ -1,0 +1,20 @@
+chromadb
+anthropic
+pypdf
+python-docx
+beautifulsoup4
+requests
+mcp
+fastapi
+uvicorn
+python-dotenv
+markdown
+
+# New dependencies for advanced features
+langgraph
+langchain-core
+langchain-anthropic
+tenacity
+tiktoken
+nltk
+pydantic
