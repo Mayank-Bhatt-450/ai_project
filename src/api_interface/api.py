@@ -9,7 +9,7 @@ from data_ingestors import text_ingestor
 from agents.rag_agent import RAGAgent
 from services.memory import Memory
 
-logging.basicConfig(level=logging.DEBUG)  # set to INFO in production
+logging.basicConfig(level=logging.DEBUG) 
 
 app = FastAPI(title="RAG Agent API")
 

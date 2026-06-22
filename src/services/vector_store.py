@@ -13,7 +13,7 @@ config = Settings()
 logger = logging.getLogger(__name__)
 
 
-def _build_embeddings() -> Embeddings:
+def _build_embeddings():
     from langchain_ollama import OllamaEmbeddings
     kwargs = {"model": config.ollama_embedding_model}
     if config.ollama_base_url:
@@ -32,8 +32,8 @@ class VectorStore:
             collection_configuration={"hnsw": {"space": "cosine"}},
         )
 
-    # ------------------------------------------------------------------
-    def add_documents(self, docs: list[Document]) -> int:
+    
+    def add_documents(self, docs) :
         ids, texts, metas = [], [], []
         for doc in docs:
             h = hashlib.sha256(
@@ -50,10 +50,10 @@ class VectorStore:
         logger.info("Added %d chunks to vector store", len(ids))
         return len(ids)
 
-    # ------------------------------------------------------------------
+    
     def similarity_search_with_score(
         self, query: str, k: int = None
-    ) -> list[tuple[Document, float]]:
+    ):
         """
         Returns (Document, similarity_score) pairs where score ∈ [0, 1].
         Higher score = more similar. Uses cosine similarity via LangChain's
@@ -66,7 +66,7 @@ class VectorStore:
 
         results = self._store.similarity_search_with_relevance_scores(query, k=min(k, self.count()))
 
-        # Debug logging so you can see raw scores and tune the threshold
+
         for doc, score in results:
             logger.debug(
                 "score=%.4f source=%s section=%s",
@@ -76,15 +76,15 @@ class VectorStore:
             )
         return results
 
-    # ------------------------------------------------------------------
-    def list_sources(self) -> list[str]:
+    
+    def list_sources(self) :
         col = self._client.get_collection("knowledge_base")
         if col.count() == 0:
             return []
         all_meta = col.get(include=["metadatas"])["metadatas"]
         return sorted({m.get("source", "unknown") for m in all_meta})
 
-    def delete_source(self, source: str) -> int:
+    def delete_source(self, source: str):
         col = self._client.get_collection("knowledge_base")
         result = col.get(where={"source": source}, include=[])
         ids = result.get("ids", [])
@@ -92,7 +92,7 @@ class VectorStore:
             col.delete(ids=ids)
         return len(ids)
 
-    def count(self) -> int:
+    def count(self):
         try:
             return self._client.get_collection("knowledge_base").count()
         except Exception:

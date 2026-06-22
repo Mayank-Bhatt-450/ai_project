@@ -3,7 +3,6 @@ from pathlib import Path
 import re
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
-from services import chunk_creator
 
 def _get_splitter(chunk_size: int = None, overlap: int = None):
     return RecursiveCharacterTextSplitter(
@@ -14,11 +13,11 @@ def _get_splitter(chunk_size: int = None, overlap: int = None):
     )
 
 
-def _clean(text: str) -> str:
+def _clean(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _enumerate_chunks(docs: list[Document]) -> list[Document]:
+def _enumerate_chunks(docs):
     """Add a human-readable 'section' field to each chunk for citations."""
     for i, doc in enumerate(docs, start=1):
         page = doc.metadata.get("page", "")

@@ -16,8 +16,6 @@ from data_ingestors import text_ingestor
 config = Settings()
 logger = logging.getLogger(__name__)
 
-# BUG FIX: NOT_FOUND_MESSAGE must be a plain single-line string with no
-
 NOT_FOUND_MESSAGE = "I could not find relevant information in the provided sources."
 
 SYSTEM_TEMPLATE = """You are a precise research assistant. You answer ONLY \
@@ -57,7 +55,7 @@ def _build_llm():
     return OllamaClient().get_llm_client()
 
 
-def format_docs_for_prompt(docs_and_scores: list[tuple[Document, float]]) -> str:
+def format_docs_for_prompt(docs_and_scores):
     blocks = []
     for i, (doc, score) in enumerate(docs_and_scores, start=1):
         meta = doc.metadata
@@ -68,7 +66,7 @@ def format_docs_for_prompt(docs_and_scores: list[tuple[Document, float]]) -> str
     return "\n\n".join(blocks)
 
 
-def docs_to_citations(docs_and_scores: list[tuple[Document, float]]) -> list[Citation]:
+def docs_to_citations(docs_and_scores):
     return [
         Citation(
             index=i,
@@ -96,7 +94,7 @@ class RAGAgent:
         ])
         return RunnablePassthrough() | prompt | self._llm | StrOutputParser()
 
-    def answer(self, user_id: str, session_id: str, query: str) -> RAGResponse:
+    def answer(self, user_id, session_id, query):
         
         if query.strip().lower().startswith("#remember:"):
             fact = query.split(":", 1)[-1].strip()
@@ -157,7 +155,7 @@ class RAGAgent:
             grounded=grounded,
         )
 
-    def format_response(self, response: RAGResponse) -> str:
+    def format_response(self, response) :
         output = [response.answer]
         if response.citations:
             output.append("\nSources:")

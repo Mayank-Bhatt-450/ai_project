@@ -42,7 +42,7 @@ class Memory:
             conn.close()
 
 
-    def add_message(self, user_id: str, session_id: str, role: str, content: str) -> None:
+    def add_message(self, user_id: str, session_id: str, role: str, content: str):
         with self._contextmanager() as conn:
             conn.execute(
                 "INSERT INTO messages (user_id, session_id, role, content, created_at) "
@@ -50,7 +50,7 @@ class Memory:
                 (user_id, session_id, role, content, time.time()),
             )
 
-    def get_recent_history(self, user_id: str, limit: int = None) -> list[dict]:
+    def get_recent_history(self, user_id: str, limit: int = None):
 
         limit = limit or config.recent_history_turns
         with self._contextmanager() as conn:
@@ -62,7 +62,7 @@ class Memory:
         return [{"role": r, "content": c} for r, c in reversed(rows)]
 
 
-    def set_preference(self, user_id: str, key: str, value: str) -> None:
+    def set_preference(self, user_id: str, key: str, value: str):
         with self._contextmanager() as conn:
             conn.execute(
                 "INSERT INTO preferences (user_id, key, value, updated_at) VALUES (?, ?, ?, ?) "
@@ -71,14 +71,14 @@ class Memory:
                 (user_id, key, value, time.time()),
             )
 
-    def get_preferences(self, user_id: str) -> dict[str, str]:
+    def get_preferences(self, user_id: str) :
         with self._contextmanager() as conn:
             rows = conn.execute(
                 "SELECT key, value FROM preferences WHERE user_id = ?", (user_id,)
             ).fetchall()
         return {k: v for k, v in rows}
 
-    def forget_preference(self, user_id: str, key: str) -> None:
+    def forget_preference(self, user_id: str, key: str) :
         with self._contextmanager() as conn:
             conn.execute(
                 "DELETE FROM preferences WHERE user_id = ? AND key = ?", (user_id, key)

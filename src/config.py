@@ -30,7 +30,7 @@ class Settings(BaseSettings):
         description="Ollama chat model name"
     )
     ollama_request_timeout: int = Field(
-        default=120,   # BUG FIX: was 5 seconds — way too short for local LLM inference
+        default=120,   
         description="Timeout in seconds for Ollama requests"
     )
     ollama_embedding_model: str = Field(
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     )
 
     class Config:
-        env_file = ".env"          # BUG FIX: was missing — Settings never read the .env file
+        env_file = ".env"
         env_file_encoding = "utf-8"
         env_prefix = ""
         extra = "ignore"
