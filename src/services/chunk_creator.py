@@ -1,8 +1,6 @@
-import re
-from typing import Callable, Literal
+
+from typing import  Literal
 import nltk
-import tiktoken
-import config
 from nltk.tokenize import sent_tokenize
 # Download NLTK data once 
 try:

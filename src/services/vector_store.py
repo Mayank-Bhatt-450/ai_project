@@ -1,75 +1,99 @@
-
 import hashlib
+import logging
 from typing import Any
 
 import chromadb
-from chromadb.utils import embedding_functions
+from langchain_chroma import Chroma
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
+
 from config import Settings
 
-settings=Settings()
+config = Settings()
+logger = logging.getLogger(__name__)
+
+
+def _build_embeddings() -> Embeddings:
+    from langchain_ollama import OllamaEmbeddings
+    kwargs = {"model": config.ollama_embedding_model}
+    if config.ollama_base_url:
+        kwargs["base_url"] = config.ollama_base_url
+    return OllamaEmbeddings(**kwargs)
+
+
 class VectorStore:
     def __init__(self):
-        print(settings.chroma_dir)
-        self.client=chromadb.PersistentClient(path=str(settings.chroma_dir))
-        self.embed_fn = embedding_functions.DefaultEmbeddingFunction()
-        self.collection = self.client.get_or_create_collection(
-            name='knowledge_base',
-            embedding_function=self.embed_fn,
-            metadata={"hnsw:space": "cosine"},
+        self._embeddings = _build_embeddings()
+        self._client = chromadb.PersistentClient(path=str(config.chroma_dir))
+        self._store = Chroma(
+            client=self._client,
+            collection_name="knowledge_base",
+            embedding_function=self._embeddings,
+            collection_configuration={"hnsw": {"space": "cosine"}},
         )
-    def add_chunks(self, chunks):
-        if not chunks:
+
+    # ------------------------------------------------------------------
+    def add_documents(self, docs: list[Document]) -> int:
+        ids, texts, metas = [], [], []
+        for doc in docs:
+            h = hashlib.sha256(
+                f"{doc.metadata.get('source')}::{doc.metadata.get('section')}::{doc.page_content}".encode()
+            ).hexdigest()
+            ids.append(h)
+            texts.append(doc.page_content)
+            metas.append({k: (v if v is not None else "") for k, v in doc.metadata.items()})
+
+        if not ids:
             return 0
 
-        ids, documents, metadatas = [], [], []
-        for chunk in chunks:
-            text = chunk["text"]
-            meta = chunk["metadata"]
-            content_key = f"{meta.get('source')}::{meta.get('section')}::{text}"
-            chunk_id = hashlib.sha256(content_key.encode("utf-8")).hexdigest()
-            ids.append(chunk_id)
-            documents.append(text)
-
-            clean_meta = {
-                key: (value if value is not None else "") for key, value in meta.items()
-                }
-            metadatas.append(clean_meta)
-
-        self.collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+        self._store.add_texts(texts=texts, metadatas=metas, ids=ids)
+        logger.info("Added %d chunks to vector store", len(ids))
         return len(ids)
-    
-    def query(self, query_text, top_k = 5) :
-        top_k = top_k 
-        if self.collection.count() == 0:
+
+    # ------------------------------------------------------------------
+    def similarity_search_with_score(
+        self, query: str, k: int = None
+    ) -> list[tuple[Document, float]]:
+        """
+        Returns (Document, similarity_score) pairs where score ∈ [0, 1].
+        Higher score = more similar. Uses cosine similarity via LangChain's
+        relevance score normalization: relevance = 1 - cosine_distance.
+        """
+        k = k or 5
+        if self.count() == 0:
+            logger.warning("similarity_search called but vector store is empty")
             return []
 
-        results = self.collection.query(
-            query_texts=[query_text],
-            n_results=min(top_k, self.collection.count()),
-        )
+        results = self._store.similarity_search_with_relevance_scores(query, k=min(k, self.count()))
 
-        response = []
-        docs = results.get("documents", [[]])[0]
-        metas = results.get("metadatas", [[]])[0]
-        dists = results.get("distances", [[]])[0]
-        for doc, meta, dist in zip(docs, metas, dists):
-            response.append({"text": doc, "metadata": meta, "distance": dist})
-        return response
-    
-    def list_sources(self) -> list[str]:
-        if self.collection.count() == 0:
-            return []
-        all_meta = self.collection.get(include=["metadatas"])["metadatas"]
-        return sorted(
-            {m.get("source", "unknown") for m in all_meta}
+        # Debug logging so you can see raw scores and tune the threshold
+        for doc, score in results:
+            logger.debug(
+                "score=%.4f source=%s section=%s",
+                score,
+                doc.metadata.get("source"),
+                doc.metadata.get("section"),
             )
+        return results
+
+    # ------------------------------------------------------------------
+    def list_sources(self) -> list[str]:
+        col = self._client.get_collection("knowledge_base")
+        if col.count() == 0:
+            return []
+        all_meta = col.get(include=["metadatas"])["metadatas"]
+        return sorted({m.get("source", "unknown") for m in all_meta})
 
     def delete_source(self, source: str) -> int:
-        existing = self.collection.get(where={"source": source}, include=[])
-        ids = existing.get("ids", [])
+        col = self._client.get_collection("knowledge_base")
+        result = col.get(where={"source": source}, include=[])
+        ids = result.get("ids", [])
         if ids:
-            self.collection.delete(ids=ids)
+            col.delete(ids=ids)
         return len(ids)
 
     def count(self) -> int:
-        return self.collection.count()
+        try:
+            return self._client.get_collection("knowledge_base").count()
+        except Exception:
+            return 0
