@@ -117,13 +117,7 @@ class Memory:
         limit: int = 50,
         offset: int = 0,
     ) -> dict:
-        """
-        Return paginated chat messages for a user.
-        If session_id is given, scoped to that session only.
-        Messages are returned in chronological order.
-        """
         if session_id:
-            count_row = self._contextmanager().__enter__()
             with self._contextmanager() as conn:
                 total = conn.execute(
                     "SELECT COUNT(*) FROM messages WHERE user_id = ? AND session_id = ?",
