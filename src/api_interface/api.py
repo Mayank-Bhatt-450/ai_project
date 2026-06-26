@@ -8,16 +8,21 @@ from services.vector_store import VectorStore
 from data_ingestors import text_ingestor
 from agents.rag_agent import RAGAgent
 from services.memory import Memory
+from contextlib import asynccontextmanager
 
 logging.basicConfig(level=logging.DEBUG) 
 
-app = FastAPI(title="RAG Agent API")
+
 
 _store  = VectorStore()
 _memory = Memory()
-_agent  = RAGAgent(vectorstore=_store, memory=_memory)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _agent
+    _agent = await RAGAgent.create(vectorstore=_store, memory=_memory)
+    yield
 
-
+app = FastAPI(title="RAG Agent API", lifespan=lifespan)
 class ChatRequest(BaseModel):
     user_id: str
     session_id: str
@@ -29,9 +34,9 @@ class FileIngestRequest(BaseModel):
 
 
 @app.post("/chat")
-def chat(req: ChatRequest):
+async def chat(req: ChatRequest):
     try:
-        resp = _agent.answer(req.user_id, req.session_id, req.message)
+        resp = await _agent.answer(req.user_id, req.session_id, req.message)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     return {

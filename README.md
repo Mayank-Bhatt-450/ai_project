@@ -14,3 +14,11 @@ poetry install
 ```
 uvicorn api:app --reload --port 8000
 ```
+
+
+```
+#TODO
+* count tokens
+* chat summarisation 
+
+```

@@ -13,23 +13,57 @@ from services.memory import Memory
 from services.vector_store import VectorStore
 from agents.services.ollama_client_maker import OllamaClient
 from data_ingestors import text_ingestor
+
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain.agents import create_agent
+
+
 config = Settings()
 logger = logging.getLogger(__name__)
 
-NOT_FOUND_MESSAGE = "I could not find relevant information in the provided sources."
+NOT_FOUND_MESSAGE = "I couldnot find relevant information in the provided sources."
+#8. Do NOT show tool details or traceback only response.
+SYSTEM_TEMPLATE = """
+You are a precise assistant with access to external MCP tools and a knowledge base.
 
-SYSTEM_TEMPLATE = """You are a precise research assistant. You answer ONLY \
-using the numbered SOURCE excerpts below. No other knowledge may be used.
+You have two ways to answer user requests.
 
-Rules — no exceptions:
-• Every factual claim must cite its source with a bracketed number, e.g. [1] or [2][3].
-• If the sources do not fully answer the question, say so explicitly.
-• If NONE of the sources are relevant, respond with exactly:
+## 1. User Commands (Highest Priority)
+
+If the user's message starts with the character '#', you MUST treat it as a command.
+
+Examples:
+- #timesheet
+- #timesheet --showmore
+- #leave
+- #calendar
+
+For these messages:
+
+1. Immediately call the `execute_user_commands` tool.
+2. Pass the user command unchanged as the tool input.
+3. Return the tool's response directly to the user.
+4. Do NOT answer from the knowledge base.
+5. Do NOT explain what the tool does.
+6. Do NOT summarize, modify, or fabricate the tool's output.
+7. Only if the tool reports that the command is unknown or cannot be executed should you inform the user accordingly.
+
+
+## 2. Knowledge Base
+
+If the user's message does NOT begin with '#', answer using ONLY the numbered SOURCE excerpts provided below.
+
+Rules:
+- Every factual statement must cite its source using bracketed citations, for example: [1] or [2][3].
+- Never use outside knowledge.
+- Never fabricate facts.
+- If the sources do not fully answer the question, explicitly state that the available information is incomplete.
+- If none of the sources are relevant, respond with exactly:
   "{not_found}"
-• Never invent, guess, or extrapolate beyond what the sources say.
 
 SOURCES:
-{context}"""
+{context}
+"""
 
 HUMAN_TEMPLATE = "{question}"
 
@@ -51,8 +85,8 @@ class RAGResponse:
     grounded: bool = True
 
 
-def _build_llm():
-    return OllamaClient().get_llm_client()
+def _build_llm(tools):
+    return OllamaClient(tools).get_llm_client()
 
 
 def format_docs_for_prompt(docs_and_scores):
@@ -84,18 +118,29 @@ class RAGAgent:
     def __init__(self, vectorstore: VectorStore = None, memory: Memory = None):
         self.vectorstore = vectorstore or VectorStore()
         self.memory = memory or Memory()
-        self._llm = _build_llm()
-        self._chain = self._build_chain()
-
-    def _build_chain(self):
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_TEMPLATE),
-            ("human", HUMAN_TEMPLATE),
-        ])
-        return RunnablePassthrough() | prompt | self._llm | StrOutputParser()
-
-    def answer(self, user_id, session_id, query):
+        self.client = MultiServerMCPClient(
+        {
+            "time": {
+                "transport": "sse",
+                "url": "http://localhost:4040/sse"
+            }
+        }
+    )
         
+        self._chain = None
+        self._llm =None
+    async def _init_llm(self):
+        self.tools= await self.client.get_tools()
+        self._llm = _build_llm(self.tools)
+        self._chain = self._build_chain()
+    def _build_chain(self):
+        return create_agent(
+            model=self._llm,
+            tools=self.tools,
+        )
+
+    async def answer(self, user_id, session_id, query):
+        is_command = query.strip().startswith("#")
         if query.strip().lower().startswith("#remember:"):
             fact = query.split(":", 1)[-1].strip()
             self.memory.add_message(user_id, session_id, "user", query)
@@ -104,26 +149,28 @@ class RAGAgent:
             docs=text_ingestor.process_contenets(process_text_flag=True,data=fact)
             self.vectorstore.add_documents(docs)
             return RAGResponse(answer=ack, citations=[], grounded=True)
+        context=''
+        citations=[]
+        if not is_command:
+            # Retrieve and score
+            docs_and_scores = self.vectorstore.similarity_search_with_score(query)
+            relevant = [
+                (doc, score) for doc, score in docs_and_scores
+                if score >= config.relevance_similarity_threshold
+            ]
 
-        # Retrieve and score
-        docs_and_scores = self.vectorstore.similarity_search_with_score(query)
-        relevant = [
-            (doc, score) for doc, score in docs_and_scores
-            if score >= config.relevance_similarity_threshold
-        ]
+            logger.info(
+                "query=%r  retrieved=%d  above_threshold=%d  threshold=%.2f",
+                query, len(docs_and_scores), len(relevant), config.relevance_similarity_threshold,
+            )
 
-        logger.info(
-            "query=%r  retrieved=%d  above_threshold=%d  threshold=%.2f",
-            query, len(docs_and_scores), len(relevant), config.relevance_similarity_threshold,
-        )
+            if not relevant:
+                self.memory.add_message(user_id, session_id, "user", query)
+                self.memory.add_message(user_id, session_id, "assistant", NOT_FOUND_MESSAGE)
+                return RAGResponse(answer=NOT_FOUND_MESSAGE, citations=[], grounded=False)
 
-        if not relevant:
-            self.memory.add_message(user_id, session_id, "user", query)
-            self.memory.add_message(user_id, session_id, "assistant", NOT_FOUND_MESSAGE)
-            return RAGResponse(answer=NOT_FOUND_MESSAGE, citations=[], grounded=False)
-
-        context = format_docs_for_prompt(relevant)
-        citations = docs_to_citations(relevant)
+            context = format_docs_for_prompt(relevant)
+            citations = docs_to_citations(relevant)
 
         history = self.memory.get_recent_history(user_id, limit=config.recent_history_turns)
         preferences = self.memory.get_preferences(user_id)
@@ -137,13 +184,31 @@ class RAGAgent:
             )
 
         question = f"{history_text}\n\nUser: {query}".strip() if history_text else query
+        system_msg = SYSTEM_TEMPLATE.format(
+            context=context, 
+            not_found=NOT_FOUND_MESSAGE
+        )
 
-        answer_text: str = self._chain.invoke({
-            "context": context,
-            "not_found": NOT_FOUND_MESSAGE,
-            "question": question,
+        messages = [
+            ("system", system_msg),
+            ("user", question) 
+        ]
+        answer = await self._chain.ainvoke({
+            "messages": messages
         })
-        answer_text = answer_text.strip()
+        answer_text = ""
+        
+        # Loop backwards through the agent's memory
+        for msg in reversed(answer["messages"]):
+            print(msg.content)
+            if msg.type == "ai" and msg.content and not getattr(msg, "tool_calls", None):
+                answer_text = ' '.join([i['text']for i in msg.content])
+                break
+                
+            if msg.type == "tool" and msg.content:
+                answer_text = ' '.join([i['text']for i in msg.content])
+                break
+
         grounded = NOT_FOUND_MESSAGE not in answer_text
 
         self.memory.add_message(user_id, session_id, "user", query)
@@ -155,12 +220,8 @@ class RAGAgent:
             grounded=grounded,
         )
 
-    def format_response(self, response) :
-        output = [response.answer]
-        if response.citations:
-            output.append("\nSources:")
-            for c in response.citations:
-                loc = f"page {c.page}" if c.page else c.section
-                output.append(f"  [{c.index}] {c.source} ({loc}) [{c.score * 100:.0f}% match]")
-                output.append(f'      "{c.snippet}"')
-        return "\n".join(output)
+    @classmethod
+    async def create(cls, vectorstore=None, memory=None):
+        self = cls(vectorstore, memory)
+        await self._init_llm()
+        return self
