@@ -76,3 +76,37 @@ def debug_scores(query: str, k: int = 5):
             for doc, score in results
         ],
     }
+
+@app.get("/usage/{user_id}")
+def get_token_usage(user_id: str):
+    """Return cumulative token usage for a user, broken down by model."""
+    return _memory.get_token_usage(user_id)
+
+
+@app.get("/chats/{user_id}/sessions")
+def list_sessions(user_id: str):
+    """List all sessions for a user with message counts and timestamps."""
+    return {"user_id": user_id, "sessions": _memory.list_sessions(user_id)}
+
+
+@app.get("/chats/{user_id}")
+def get_chat_history(
+    user_id: str,
+    session_id: str = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """
+    Retrieve paginated chat messages for a user.
+    Optionally filter by session_id. Supports limit/offset pagination.
+    """
+    if limit < 1 or limit > 500:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 500")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="offset must be >= 0")
+    return _memory.get_chat_history(
+        user_id=user_id,
+        session_id=session_id,
+        limit=limit,
+        offset=offset,
+    )

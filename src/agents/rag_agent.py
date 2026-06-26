@@ -7,6 +7,13 @@ from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+)
 
 from config import Settings
 from services.memory import Memory
@@ -114,6 +121,33 @@ def docs_to_citations(docs_and_scores):
     ]
 
 
+def _make_retry_chain(chain, max_attempts: int, min_wait: float, max_wait: float):
+    """Wrap an async ainvoke call with tenacity retry logic."""
+
+    @retry(
+        reraise=True,
+        stop=stop_after_attempt(max_attempts),
+        wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
+        retry=retry_if_exception_type(Exception),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+    )
+    async def _invoke(payload):
+        return await chain.ainvoke(payload)
+
+    return _invoke
+
+
+def _extract_token_usage(answer: dict) -> tuple[int, int]:
+    input_tokens = 0
+    output_tokens = 0
+    for msg in answer.get("messages", []):
+        usage = getattr(msg, "usage_metadata", None)
+        if usage:
+            input_tokens += usage.get("input_tokens", 0)
+            output_tokens += usage.get("output_tokens", 0)
+    return input_tokens, output_tokens
+
+
 class RAGAgent:
     def __init__(self, vectorstore: VectorStore = None, memory: Memory = None):
         self.vectorstore = vectorstore or VectorStore()
@@ -133,6 +167,13 @@ class RAGAgent:
         self.tools= await self.client.get_tools()
         self._llm = _build_llm(self.tools)
         self._chain = self._build_chain()
+        self._invoke = _make_retry_chain(
+            self._chain,
+            max_attempts=config.llm_retry_max_attempts,
+            min_wait=config.llm_retry_min_wait,
+            max_wait=config.llm_retry_max_wait,
+        )
+
     def _build_chain(self):
         return create_agent(
             model=self._llm,
@@ -193,7 +234,7 @@ class RAGAgent:
             ("system", system_msg),
             ("user", question) 
         ]
-        answer = await self._chain.ainvoke({
+        answer = await self._invoke({
             "messages": messages
         })
         answer_text = ""
@@ -208,6 +249,21 @@ class RAGAgent:
             if msg.type == "tool" and msg.content:
                 answer_text = ' '.join([i['text']for i in msg.content])
                 break
+
+        # Record token usage for this user
+        input_tokens, output_tokens = _extract_token_usage(answer)
+        if input_tokens or output_tokens:
+            self.memory.record_token_usage(
+                user_id=user_id,
+                session_id=session_id,
+                model=config.ollama_model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+            logger.info(
+                "token_usage user=%s input=%d output=%d total=%d",
+                user_id, input_tokens, output_tokens, input_tokens + output_tokens,
+            )
 
         grounded = NOT_FOUND_MESSAGE not in answer_text
 

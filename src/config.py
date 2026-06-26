@@ -43,6 +43,19 @@ class Settings(BaseSettings):
         description="Minimum cosine similarity [0,1] for a chunk to be used in an answer"
     )
 
+    llm_retry_max_attempts: int = Field(
+        default=3,
+        description="Maximum number of retry attempts for LLM calls"
+    )
+    llm_retry_min_wait: float = Field(
+        default=2.0,
+        description="Minimum wait in seconds between LLM retries (exponential backoff)"
+    )
+    llm_retry_max_wait: float = Field(
+        default=30.0,
+        description="Maximum wait in seconds between LLM retries (exponential backoff)"
+    )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
