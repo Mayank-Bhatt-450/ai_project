@@ -243,7 +243,10 @@ class RAGAgent:
         for msg in reversed(answer["messages"]):
             print(msg.content)
             if msg.type == "ai" and msg.content and not getattr(msg, "tool_calls", None):
-                answer_text = ' '.join([i['text']for i in msg.content])
+                if type(msg.content) == list:
+                    answer_text = ' '.join([i['text']for i in msg.content])
+                else:  
+                    answer_text = msg.content
                 break
                 
             if msg.type == "tool" and msg.content:

@@ -9,6 +9,7 @@ from data_ingestors import text_ingestor
 from agents.rag_agent import RAGAgent
 from services.memory import Memory
 from contextlib import asynccontextmanager
+from services.query_rephraser import QueryRephraserService 
 
 logging.basicConfig(level=logging.DEBUG) 
 
@@ -16,10 +17,13 @@ logging.basicConfig(level=logging.DEBUG)
 
 _store  = VectorStore()
 _memory = Memory()
+
+_query_rephraser = QueryRephraserService() 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _agent
     _agent = await RAGAgent.create(vectorstore=_store, memory=_memory)
+    _query_rephraser.rephrase("warm up")
     yield
 
 app = FastAPI(title="RAG Agent API", lifespan=lifespan)
@@ -35,8 +39,18 @@ class FileIngestRequest(BaseModel):
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
+    
+        
     try:
-        resp = await _agent.answer(req.user_id, req.session_id, req.message)
+        
+        if not req.message.strip().startswith('#'):
+            rephrase_result = _query_rephraser.rephrase(req.message)
+            message_to_process = rephrase_result["rephrased"]
+        else:
+            
+            message_to_process = req.message
+        resp = await _agent.answer(req.user_id, req.session_id, message_to_process)
+        print('##################message_to_process=',message_to_process)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     return {
