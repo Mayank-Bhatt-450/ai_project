@@ -9,7 +9,7 @@ from data_ingestors import text_ingestor
 from agents.rag_agent import RAGAgent
 from services.memory import Memory
 from contextlib import asynccontextmanager
-from services.query_rephraser import QueryRephraserService 
+from agents.query_rephraser import QueryRephraserService 
 
 logging.basicConfig(level=logging.DEBUG) 
 
